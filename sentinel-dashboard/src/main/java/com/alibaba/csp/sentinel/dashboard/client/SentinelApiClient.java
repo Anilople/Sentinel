@@ -34,8 +34,10 @@ import com.alibaba.csp.sentinel.adapter.gateway.common.rule.GatewayFlowRule;
 import com.alibaba.csp.sentinel.command.CommandConstants;
 import com.alibaba.csp.sentinel.config.SentinelConfig;
 import com.alibaba.csp.sentinel.command.vo.NodeVo;
+import com.alibaba.csp.sentinel.dashboard.constant.RuleTypeConstants;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiDefinitionEntity;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.GatewayFlowRuleEntity;
+import com.alibaba.csp.sentinel.dashboard.service.SentinelApolloPublicNamespaceService;
 import com.alibaba.csp.sentinel.dashboard.util.AsyncUtils;
 import com.alibaba.csp.sentinel.slots.block.Rule;
 import com.alibaba.csp.sentinel.slots.block.authority.AuthorityRule;
@@ -80,7 +82,6 @@ import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -130,11 +131,15 @@ public class SentinelApiClient {
 
     private static final SentinelVersion version160 = new SentinelVersion(1, 6, 0);
     private static final SentinelVersion version171 = new SentinelVersion(1, 7, 1);
-    
-    @Autowired
-    private AppManagement appManagement;
 
-    public SentinelApiClient() {
+    private final AppManagement appManagement;
+
+    private final SentinelApolloPublicNamespaceService sentinelApolloPublicNamespaceService;
+
+    public SentinelApiClient(AppManagement appManagement, SentinelApolloPublicNamespaceService sentinelApolloPublicNamespaceService) {
+        this.appManagement = appManagement;
+        this.sentinelApolloPublicNamespaceService = sentinelApolloPublicNamespaceService;
+
         IOReactorConfig ioConfig = IOReactorConfig.custom().setConnectTimeout(3000).setSoTimeout(10000)
             .setIoThreadCount(Runtime.getRuntime().availableProcessors() * 2).build();
         httpClient = HttpAsyncClients.custom().setRedirectStrategy(new DefaultRedirectStrategy() {
@@ -385,56 +390,92 @@ public class SentinelApiClient {
         return fetchItems(ip, port, GET_RULES_PATH, type, ruleType);
     }
     
+//    private boolean setRules(String app, String ip, int port, String type, List<? extends RuleEntity> entities) {
+//        if (entities == null) {
+//            return true;
+//        }
+//        try {
+//            AssertUtil.notEmpty(app, "Bad app name");
+//            AssertUtil.notEmpty(ip, "Bad machine IP");
+//            AssertUtil.isTrue(port > 0, "Bad machine port");
+//            String data = JSON.toJSONString(
+//                    entities.stream().map(r -> r.toRule()).collect(Collectors.toList()));
+//            Map<String, String> params = new HashMap<>(2);
+//            params.put("type", type);
+//            params.put("data", data);
+//            String result = executeCommand(app, ip, port, SET_RULES_PATH, params, true).get();
+//            logger.info("setRules result: {}, type={}", result, type);
+//            return true;
+//        } catch (InterruptedException e) {
+//            logger.warn("setRules API failed: {}", type, e);
+//            return false;
+//        } catch (ExecutionException e) {
+//            logger.warn("setRules API failed: {}", type, e.getCause());
+//            return false;
+//        } catch (Exception e) {
+//            logger.error("setRules API failed, type={}", type, e);
+//            return false;
+//        }
+//    }
+
     private boolean setRules(String app, String ip, int port, String type, List<? extends RuleEntity> entities) {
-        if (entities == null) {
-            return true;
-        }
+        CompletableFuture<Void> completableFuture = this.setRulesAsync(app, ip, port, type, entities);
+
         try {
-            AssertUtil.notEmpty(app, "Bad app name");
-            AssertUtil.notEmpty(ip, "Bad machine IP");
-            AssertUtil.isTrue(port > 0, "Bad machine port");
-            String data = JSON.toJSONString(
-                    entities.stream().map(r -> r.toRule()).collect(Collectors.toList()));
-            Map<String, String> params = new HashMap<>(2);
-            params.put("type", type);
-            params.put("data", data);
-            String result = executeCommand(app, ip, port, SET_RULES_PATH, params, true).get();
-            logger.info("setRules result: {}, type={}", result, type);
+            completableFuture.get();
             return true;
         } catch (InterruptedException e) {
-            logger.warn("setRules API failed: {}", type, e);
-            return false;
+            e.printStackTrace();
         } catch (ExecutionException e) {
-            logger.warn("setRules API failed: {}", type, e.getCause());
-            return false;
-        } catch (Exception e) {
-            logger.error("setRules API failed, type={}", type, e);
-            return false;
+            e.printStackTrace();
         }
+        return false;
     }
 
+//    private CompletableFuture<Void> setRulesAsync(String app, String ip, int port, String type, List<? extends RuleEntity> entities) {
+//        try {
+//            AssertUtil.notNull(entities, "rules cannot be null");
+//            AssertUtil.notEmpty(app, "Bad app name");
+//            AssertUtil.notEmpty(ip, "Bad machine IP");
+//            AssertUtil.isTrue(port > 0, "Bad machine port");
+//            String data = JSON.toJSONString(
+//                entities.stream().map(r -> r.toRule()).collect(Collectors.toList()));
+//            Map<String, String> params = new HashMap<>(2);
+//            params.put("type", type);
+//            params.put("data", data);
+//            return executeCommand(app, ip, port, SET_RULES_PATH, params, true)
+//                .thenCompose(r -> {
+//                    if ("success".equalsIgnoreCase(r.trim())) {
+//                        return CompletableFuture.completedFuture(null);
+//                    }
+//                    return AsyncUtils.newFailedFuture(new CommandFailedException(r));
+//                });
+//        } catch (Exception e) {
+//            logger.error("setRulesAsync API failed, type={}", type, e);
+//            return AsyncUtils.newFailedFuture(e);
+//        }
+//    }
+
     private CompletableFuture<Void> setRulesAsync(String app, String ip, int port, String type, List<? extends RuleEntity> entities) {
-        try {
-            AssertUtil.notNull(entities, "rules cannot be null");
-            AssertUtil.notEmpty(app, "Bad app name");
-            AssertUtil.notEmpty(ip, "Bad machine IP");
-            AssertUtil.isTrue(port > 0, "Bad machine port");
-            String data = JSON.toJSONString(
-                entities.stream().map(r -> r.toRule()).collect(Collectors.toList()));
-            Map<String, String> params = new HashMap<>(2);
-            params.put("type", type);
-            params.put("data", data);
-            return executeCommand(app, ip, port, SET_RULES_PATH, params, true)
-                .thenCompose(r -> {
-                    if ("success".equalsIgnoreCase(r.trim())) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return AsyncUtils.newFailedFuture(new CommandFailedException(r));
-                });
-        } catch (Exception e) {
-            logger.error("setRulesAsync API failed, type={}", type, e);
-            return AsyncUtils.newFailedFuture(e);
+        AssertUtil.notNull(entities, "rules cannot be null");
+        AssertUtil.notEmpty(app, "Bad app name");
+        AssertUtil.notEmpty(ip, "Bad machine IP");
+        AssertUtil.isTrue(port > 0, "Bad machine port");
+
+        logger.debug(
+                "setRulesAsync app = [{}], ip = [{}], port = [{}], type = [{}], entities size = {}",
+                app,
+                ip,
+                port,
+                type,
+                entities.size()
+        );
+
+        if (FLOW_RULE_TYPE.equals(type)) {
+            return this.sentinelApolloPublicNamespaceService.setRulesAsync(app, RuleTypeConstants.FLOW, entities);
         }
+
+        throw new UnsupportedOperationException("rule type " + type);
     }
 
     public List<NodeVo> fetchResourceOfMachine(String ip, int port, String type) {
